@@ -1,5 +1,6 @@
 import sys
 import six
+import ast
 import json
 import click
 import spotipy
@@ -12,7 +13,7 @@ from PyInquirer import (Token, ValidationError, Validator, print_json, prompt,
                         style_from_dict)
 
 # proportion of songs in album saved to consider it unviewed
-SONGS_VIEWED_IN_ALBUM_CUTOFF = 0.3
+SONGS_VIEWED_IN_ALBUM_CUTOFF = 0.5
 
 # styles for CLI
 style = style_from_dict({
@@ -64,6 +65,20 @@ def askRequest():
             'name': 'request_type',
             'message': 'What would you like to do?',
             'choices': ['Initialize', 'Update', 'Surprise me!']
+        }
+    ]
+
+    answers = prompt(questions, style=style)
+    return answers
+
+# asks user whether they've listened to an album recently
+def askListen(album, artist):
+    questions = [
+        {
+            'type': 'list',
+            'name': 'answer',
+            'message': 'Have you listened to \'' + album + '\' by \'' + artist + '\' recently?',
+            'choices': ['Yes', 'No']
         }
     ]
 
@@ -129,6 +144,10 @@ def init_albums(sp, username, token):
                         if name not in albums[album]:
                             albums[album].append(name)
 
+    # writes the dict of id's to a file
+    with open('ids_artists_albums_tracks_saved.txt', 'w+') as file:
+        file.write(json.dumps(artists_to_albums))
+
     ## builds out txt file with albums that need checking out
 
     albums_by_artist_to_rec = {}
@@ -148,10 +167,8 @@ def init_albums(sp, username, token):
         # gets albums from that artist
         res3 = sp.artist_albums(artist)
         all_albums = res3['items']
-        ct = 0
 
         while res3['next']:
-            ct += 1
             res3 = sp.next(res3)
             all_albums.extend(res3['items'])
 
@@ -201,7 +218,7 @@ def init_albums(sp, username, token):
                         albums_by_artist_to_rec[artist_name].append(album['name'])
 
     # logs the date of execution
-    albums_by_artist_to_rec['_meta_date_updated'] = datetime.date.today()
+    albums_by_artist_to_rec['_meta_date_updated'] = str(datetime.date.today())
 
     # writes the txt file
     with open('albums_to_listen.txt', 'w+') as file:
@@ -209,6 +226,148 @@ def init_albums(sp, username, token):
 
 
 def update_albums(sp, username, token):
+
+    # loads list of recommended albums
+    info = open("albums_to_listen.txt", "r")
+    contents = info.read()
+    rec_albums = ast.literal_eval(contents)
+    info.close()
+
+    # loads list of saved albums
+    info = open("ids_artists_albums_tracks_saved.txt", "r")
+    contents = info.read()
+    saved_albums = ast.literal_eval(contents)
+    info.close()
+
+    # extracts date of last update
+    last_update = rec_albums['_meta_date_updated']
+
+    # gets user playlists
+    res1 = sp.user_playlists(username)
+    playlists = res1['items']
+    while res1['next']:
+        res1 = sp.next(res1)
+        playlists.extend(res1['items'])
+
+    trx_to_process = []
+
+    # for each playlist...
+    for i, playlist in enumerate(playlists):
+
+        # gets the tracks in the playlist
+        res2 = sp.playlist_tracks(playlist['id'])
+        tracks = res2['items']
+        while res2['next']:
+            res2 = sp.next(res2)
+            tracks.extend(res2['items'])
+
+        # for each track...
+        for j, track in enumerate(tracks):
+
+            # extracts the time the track was added
+            date_added = track['added_at']
+            time_added = date_added.split('T')[0]
+
+            
+
+            # if addition date > update date
+            if time_added > last_update:
+
+                # adds track ID to list of tracks to be processed
+                iden = track['track']['id']
+                trx_to_process.append(iden)
+
+    # DEBUG
+    #lst = [sp.track(x)['name'] for x in trx_to_process]
+    #print(lst)
+
+    # for each track to be processed:
+    for iden in trx_to_process:
+
+        # resets the Spotify object -> seemed to help dropped connections
+        sp = spotipy.Spotify(auth=token, requests_timeout=20, retries=10)
+
+        track = sp.track(iden)
+
+        # extracts album and artists id's
+        album = track['album']
+        artists = [x['id'] for x in track['artists']]
+
+        # for each artist...
+        for artist in artists:
+
+            artist_obj = sp.artist(artist)
+            artist_name = artist_obj['name']
+
+            # if the user hasn't "listened" to any of the artist's music...
+            if artist not in saved_albums:
+
+                # gets albums from that artist
+                res3 = sp.artist_albums(artist)
+                all_albums = res3['items']
+
+                while res3['next']:
+                    res3 = sp.next(res3)
+                    all_albums.extend(res3['items'])
+
+                listened = False
+
+                # if the track is a single, adds it to the "listened" dict
+                if len(sp.album_tracks(album['id'])) == 1:
+                    saved_albums[artist] = [album['id']]
+                    listened = True
+
+                # adds all of the appropriate albums to the rec list
+                if artist_name not in rec_albums:
+                    rec_albums[artist_name] = [x['name'] for x in all_albums]
+                    if listened and album['id'] in rec_albums[artist_name]:
+                        rec_albums[artist_name].remove(album['id'])
+                else:
+                    for alb in all_albums:
+                        if alb not in rec_albums[artist_name]:
+                            rec_albums[artist_name].append(alb)
+                    if listened and album['id'] in rec_albums[artist_name]:
+                        rec_albums[artist_name].remove(album['id'])
+
+            # if user has "listened" to some of the artist's music...
+            else:
+
+                # if user has not "listened" to this album before, 
+                # asks them whether they've listened to it recently
+                if album['id'] not in saved_albums[artist]:
+                    ans = askListen(album['name'], artist_name)['answer']
+
+                    # if they have, adds it to "listened" list and removes from rec list (if needed)
+                    if ans == 'Yes':
+                        saved_albums[artist].append(album['id'])
+
+                        if album['name'] in rec_albums[artist_name]:
+                            rec_albums[artist_name].remove(album['name'])
+
+                    # if they have not, adds the album to their rec list
+                    else:
+                        # this should not be reached
+                        if album['name'] in rec_albums[artist_name]:
+                            print('ERROR')
+
+                        if artist_name in rec_albums:
+                            rec_albums[artist_name].append(album['name'])
+                        else:
+                            rec_albums[artist_name] = [album['name']]
+
+                # if user has "listened" to this album before, continues!
+
+    # updates the last updated field
+    #rec_albums['_meta_date_updated'] = str(datetime.date.today())
+    rec_albums['_meta_date_updated'] = '2020-06-15'
+
+    # writes the txt files
+    with open('albums_to_listen.txt', 'w+') as file:
+        file.write(json.dumps(rec_albums))
+
+    with open('ids_artists_albums_tracks_saved.txt', 'w+') as file:
+        file.write(json.dumps(saved_albums))
+
 
 
 @click.command()
