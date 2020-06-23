@@ -64,7 +64,21 @@ def askRequest():
             'type': 'list',
             'name': 'request_type',
             'message': 'What would you like to do?',
-            'choices': ['Initialize', 'Update', 'Surprise me!']
+            'choices': ['Initialize', 'Update', 'Gimme an album!']
+        }
+    ]
+
+    answers = prompt(questions, style=style)
+    return answers
+
+# asks user for search algorithm
+def askRequest():
+    questions = [
+        {
+            'type': 'list',
+            'name': 'search_type',
+            'message': 'How would you like us to pick it?',
+            'choices': ['Initialize', 'Update', 'Gimme an album!']
         }
     ]
 
