@@ -7,6 +7,7 @@ import spotipy
 import datetime
 import colorama
 import spotipy.util as util
+import numpy as np
 from termcolor import colored
 from pyfiglet import figlet_format
 from PyInquirer import (Token, ValidationError, Validator, print_json, prompt,
@@ -25,14 +26,6 @@ style = style_from_dict({
     Token.Pointer: '#673ab7 bold',
     Token.Question: '',
 })
-
-
-def show_tracks(tracks):
-    for i, item in enumerate(tracks['items']):
-        track = item['track']
-        print("   %d %32.32s %s" % (i, track['artists'][0]['name'],
-            track['name']))
-
 
 # logs data to the command line
 def log(string, color, font="slant", figlet=False):
@@ -72,13 +65,13 @@ def askRequest():
     return answers
 
 # asks user for search algorithm
-def askRequest():
+def askAlgo():
     questions = [
         {
             'type': 'list',
-            'name': 'search_type',
+            'name': 'algo',
             'message': 'How would you like us to pick it?',
-            'choices': ['Initialize', 'Update', 'Gimme an album!']
+            'choices': ['Inverse sampling w.r.t. album count']
         }
     ]
 
@@ -382,6 +375,46 @@ def update_albums(sp, username, token):
     with open('ids_artists_albums_tracks_saved.txt', 'w+') as file:
         file.write(json.dumps(saved_albums))
 
+def sample_inverse_freq():
+
+    # loads list of recommended albums
+    info = open("albums_to_listen.txt", "r")
+    contents = info.read()
+    rec_albums = ast.literal_eval(contents)
+    info.close()
+
+    # creates dict of artist weights
+    weight_dict = {k:len(v) for (k,v) in rec_albums.items() if isinstance(rec_albums[k], list)}
+    inv_weight_dict = {k:1/v for (k,v) in weight_dict.items()}
+
+    # sums the inverse weights
+    inv_weight_sum = sum([inv_weight_dict[x] for x in inv_weight_dict])
+
+    # creates the weighted dict
+    weighted_dict = {k:v/inv_weight_sum for (k,v) in inv_weight_dict.items()}
+
+    # samples artist from weighted dict
+    sample = np.random.choice(list(weighted_dict.keys()), p=list(weighted_dict.values()))
+    
+    # generates random album uniformly for sampled artist
+    album = np.random.choice(rec_albums[sample])
+    album = '\"' + str(album) + '\" - ' + str(sample)
+    print(album)
+
+    # adds album as current listen
+    rec_albums['_meta_current_album'] = album
+
+    # updates recommended albums file
+    with open('albums_to_listen.txt', 'w+') as file:
+        file.write(json.dumps(rec_albums))
+
+
+
+
+
+
+
+
 
 
 @click.command()
@@ -409,6 +442,15 @@ def main():
 
     # after establishing connection, uses inf loop to take requests
     while (True):
+
+        # loads list of recommended albums
+        info = open("albums_to_listen.txt", "r")
+        contents = info.read()
+        rec_albums = ast.literal_eval(contents)
+        info.close()
+
+        log("Current album: " + rec_albums['_meta_current_album'], "cyan")
+
         # takes in request
         request = askRequest()
 
@@ -423,6 +465,17 @@ def main():
 
             # updates existing list
             update_albums(sp, username, token)
+
+        # else if user requests an album...
+        if request['request_type'] == 'Gimme an album!':
+
+            # asks user for selection algorithm
+            algo = askAlgo()['algo']
+
+            # returns album based on algorithm chosen
+            if algo == 'Inverse sampling w.r.t. album count':
+                album = sample_inverse_freq()
+
 
 
 if __name__ == '__main__':
