@@ -92,6 +92,20 @@ def askListen(album, artist):
     answers = prompt(questions, style=style)
     return answers
 
+# asks user whether they've finished their current album
+def ask_fin(cur):
+    questions = [
+        {
+            'type': 'list',
+            'name': 'fin',
+            'message': 'Have you finished listening to ' + cur[0] + '?',
+            'choices': ['Yes', 'No']
+        }
+    ]
+
+    answers = prompt(questions, style=style)
+    return answers
+
 # initialize txt file with albums for user inspection
 def init_albums(sp, username, token):
 
@@ -398,11 +412,9 @@ def sample_inverse_freq():
     
     # generates random album uniformly for sampled artist
     album = np.random.choice(rec_albums[sample])
-    album = '\"' + str(album) + '\" - ' + str(sample)
-    print(album)
 
     # adds album as current listen
-    rec_albums['_meta_current_album'] = album
+    rec_albums['_meta_current_album'] = [album, sample]
 
     # updates recommended albums file
     with open('albums_to_listen.txt', 'w+') as file:
@@ -449,7 +461,10 @@ def main():
         rec_albums = ast.literal_eval(contents)
         info.close()
 
-        log("Current album: " + rec_albums['_meta_current_album'], "cyan")
+        if rec_albums['_meta_current_album'] == "":
+            log("Current album: ", "cyan")
+        else:
+            log("Current album: \"" + rec_albums['_meta_current_album'][0] + "\" - " + rec_albums['_meta_current_album'][1], "cyan")
 
         # takes in request
         request = askRequest()
@@ -468,6 +483,24 @@ def main():
 
         # else if user requests an album...
         if request['request_type'] == 'Gimme an album!':
+
+            # asks the user if they've finished the previous album
+            if rec_albums['_meta_current_album'] != "":
+                finished = ask_fin(rec_albums['_meta_current_album'])['fin']
+
+                # if they have not, logs and returns
+                if finished == 'No':
+                    log("This version does not support multiple current albums. Please finish this one and then return!", "cyan")
+                    continue
+
+                # else, updates the dict accordingly
+                album_list = rec_albums[rec_albums['_meta_current_album'][1]]
+                album_list.remove(rec_albums['_meta_current_album'][0])
+                rec_albums[rec_albums['_meta_current_album'][1]] = album_list
+
+                # updates recommended albums file
+                with open('albums_to_listen.txt', 'w+') as file:
+                    file.write(json.dumps(rec_albums))
 
             # asks user for selection algorithm
             algo = askAlgo()['algo']
