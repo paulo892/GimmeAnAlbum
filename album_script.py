@@ -437,7 +437,12 @@ def main():
     log("Press Ctrl^C to exit.", "cyan")
 
     # requests user ID / username on CLI
-    username = askUsername()['username']
+    username = askUsername()
+
+    if not bool(username):
+        return
+
+    username = username['username']
 
     # defines the scope and takes user token
     scope = 'playlist-read-private'
@@ -469,6 +474,9 @@ def main():
         # takes in request
         request = askRequest()
 
+        if not bool(request):
+            return
+
         # if user requests to initialize list...
         if request['request_type'] == 'Initialize':
 
@@ -486,7 +494,12 @@ def main():
 
             # asks the user if they've finished the previous album
             if rec_albums['_meta_current_album'] != "":
-                finished = ask_fin(rec_albums['_meta_current_album'])['fin']
+                finished = ask_fin(rec_albums['_meta_current_album'])
+
+                if not bool(finished):
+                    return
+
+                finished = finished['fin']
 
                 # if they have not, logs and returns
                 if finished == 'No':
