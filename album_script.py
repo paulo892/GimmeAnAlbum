@@ -12,6 +12,7 @@ from termcolor import colored
 from pyfiglet import figlet_format
 from PyInquirer import (Token, ValidationError, Validator, print_json, prompt,
                         style_from_dict)
+from spotipy.oauth2 import SpotifyOAuth
 
 # proportion of songs in album saved to consider it unviewed
 SONGS_VIEWED_IN_ALBUM_CUTOFF = 0.5
@@ -442,11 +443,14 @@ def main():
     if not bool(username):
         return
 
+    
+
     username = username['username']
 
     # defines the scope and takes user token
     scope = 'playlist-read-private'
     token = util.prompt_for_user_token(username, scope)
+    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope))
 
     # if token invalid, returns
     if not token:
