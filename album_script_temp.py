@@ -1,3 +1,4 @@
+import os
 import sys
 import six
 import ast
@@ -49,7 +50,7 @@ def askUsername():
     }]
 
     answers = prompt(questions, style=style)
-    return answers
+    return answers['username']
 
 # asks user for request type
 def askRequest():
@@ -108,17 +109,21 @@ def ask_fin(cur):
     return answers
 
 # initialize txt file with albums for user inspection
-def init_albums(sp, username, token):
+def init_albums(sp, username, usr_info):
 
-    # initialize dict of artists to albums to counts
-    artists_to_albums = {}
+    # initialize dicts of recommended albums and of saved track counts by album
+    albums_to_listen_by_artist = usr_info['albums_to_listen_by_artist']
+    tracks_saved_within_albums_by_artist = usr_info['tracks_saved_within_albums_by_artist']
 
-    # gets user playlists
-    res1 = sp.user_playlists(username)
-    playlists = res1['items']
-    while res1['next']:
-        res1 = sp.next(res1)
-        playlists.extend(res1['items'])
+    # gets user's playlists
+    playlist_objects = sp.user_playlists(username)
+    playlists = playlist_objects['items']
+
+    while playlist_objects['next']:
+        playlist_objects = sp.next(playlist_objects)
+        playlists.extend(playlist_objects['items'])
+    
+    print(playlists)
 
     # for each playlist...
     for i, playlist in enumerate(playlists):
@@ -437,65 +442,57 @@ def main():
     log("Welcome to \'Gimme an Album\'", "cyan")
     log("Press Ctrl^C to exit.", "cyan")
 
-    # requests user ID / username on CLI
-    #username = askUsername()
-    
+	# requests user ID from user
+    username = askUsername()
 
-    #if not bool(username):
-    #    return
+    if not bool(username):
+        return
 
-    
-    username = 'hi'
-    #username = username['username']
-
-    # defines the scope and takes user token
+	# defines scope and uses Spotipy authenticator to sign in user
     scope = 'playlist-read-private'
-    token = util.prompt_for_user_token(username, scope)
-    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope))
+    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, username=username))
 
-    # if token invalid, returns
-    if not token:
-        print("Can't get token for", username)
-        sys.exit()
-    # else...
-    else:
-        # creates spotipy object for use
-        sp = spotipy.Spotify(auth=token, requests_timeout=20, retries=10, )
+    # if user info directory doesn't exist, creates one
+    if not os.path.exists('user_info'):
+        os.makedirs('./user_info')
 
-    # after establishing connection, uses inf loop to take requests
-    while (True):
+    usr_filename = './user_info/' + username + '_ref.txt'
 
-        # loads list of recommended albums
-        info = open("albums_to_listen.txt", "r")
-        contents = info.read()
-        rec_albums = ast.literal_eval(contents)
-        info.close()
+    # opens the user file and extracts data, initializing if necessary
+    with open(usr_filename, 'w+') as usr_file:
 
-        if rec_albums['_meta_current_album'] == "":
-            log("Current album: ", "cyan")
+        # if file is empty, initializes it
+        if (usr_file.read() == ""):
+            usr_info = {'current_album': '', 'last_updated': str(datetime.date.today()), 'albums_to_listen_by_artist': {}, 'tracks_saved_within_albums_by_artist': {}}
         else:
-            log("Current album: \"" + rec_albums['_meta_current_album'][0] + "\" - " + rec_albums['_meta_current_album'][1], "cyan")
+            usr_info = ast.literal_eval(usr_file.read())
 
-        # takes in request
-        request = askRequest()
+    # logs the current album that the user is listening to
+    log('Current album: ' + usr_info['current_album'], 'cyan')
+    
+    # after establishing connection, uses infinite loop to take requests
+    while (True):
+        # takes in user request
+        request = askRequest()['request_type']
 
+        # if request empty, returns
         if not bool(request):
             return
 
-        # if user requests to initialize list...
-        if request['request_type'] == 'Initialize':
+        # if user requests to initialize...
+        if request == 'Initialize':
 
-            # creates usable list
-            init_albums(sp, username, token)
+            # performs initializations necessary for the app to work
+            updated_usr_info = init_albums(sp, username, usr_info)
 
         # else if user requests to update list...
-        if request['request_type'] == 'Update':
+        if request == 'Update':
 
             # updates existing list
-            update_albums(sp, username, token)
+            update_albums(sp, username)
 
         # else if user requests an album...
-        if request['request_type'] == 'Gimme an album!':
+        if request == 'Gimme an album!':
 
             # asks the user if they've finished the previous album
             if rec_albums['_meta_current_album'] != "":
