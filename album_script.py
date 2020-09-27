@@ -312,7 +312,7 @@ def update_albums(sp, username, usr_info):
             artist_obj = sp.artist(artist)
             artist_name = artist_obj['name']
 
-            # if the user hasn't "listened" to any of the artist's music...
+            # if the user hasn't saved any of the artist's music...
             if artist not in tracks_saved_within_albums_by_artist:
 
                 # TODO - modularize - create function for adding artist discography to this list
@@ -327,63 +327,71 @@ def update_albums(sp, username, usr_info):
 
                 listened = False
 
-                ### START HERE!!
                 # if the track in question is a single, adds it to the "listened" dict
                 if len(sp.album_tracks(album['id'])) == 1:
                     tracks_saved_within_albums_by_artist[artist] = [album['id']]
                     listened = True
 
-                # adds all of the appropriate albums to the rec list
-                if artist_name not in rec_albums:
-                    rec_albums[artist_name] = [x['name'] for x in all_albums]
-                    if listened and album['id'] in rec_albums[artist_name]:
-                        rec_albums[artist_name].remove(album['id'])
-                else:
-                    for alb in all_albums:
-                        if alb not in rec_albums[artist_name]:
-                            rec_albums[artist_name].append(alb)
-                    if listened and album['id'] in rec_albums[artist_name]:
-                        rec_albums[artist_name].remove(album['id'])
+                # if artist not in rec dict...
+                if artist_name not in albums_to_listen_by_artist:
+                    # adds all of artist's albums to rec dict
+                    albums_to_listen_by_artist[artist_name] = [x['name'] for x in all_albums]
 
-            # if user has "listened" to some of the artist's music...
+                    # removes single from rec dict
+                    if listened and album['id'] in albums_to_listen_by_artist[artist_name]:
+                        albums_to_listen_by_artist[artist_name].remove(album['id'])
+                
+                # if artist in rec dict...
+                else:
+                    # adds albums that are not already in rec dict 
+                    for alb in all_albums:
+                        if alb not in albums_to_listen_by_artist[artist_name]:
+                            albums_to_listen_by_artist[artist_name].append(alb)
+                    
+                    # removes single from rec dict
+                    # TODO - determine if necessary
+                    if listened and album['id'] in albums_to_listen_by_artist[artist_name]:
+                        albums_to_listen_by_artist[artist_name].remove(album['id'])
+
+            # if user has saved some of the artist's music...
             else:
 
-                # if user has not "listened" to this album before, 
-                # asks them whether they've listened to it recently
-                if album['id'] not in saved_albums[artist]:
+                # if user has not saved enough of this album, asks them whether they've listened to it recently
+                if album['id'] not in tracks_saved_within_albums_by_artist[artist]:
                     ans = askListen(album['name'], artist_name)['answer']
 
                     # if they have, adds it to "listened" list and removes from rec list (if needed)
                     if ans == 'Yes':
-                        saved_albums[artist].append(album['id'])
+                        tracks_saved_within_albums_by_artist[artist].append(album['id'])
 
-                        if album['name'] in rec_albums[artist_name]:
-                            rec_albums[artist_name].remove(album['name'])
+                        if album['name'] in albums_to_listen_by_artist[artist_name]:
+                            albums_to_listen_by_artist[artist_name].remove(album['name'])
 
                     # if they have not, adds the album to their rec list
                     else:
                         # this should not be reached
-                        if album['name'] in rec_albums[artist_name]:
-                            print('ERROR')
+                        # TODO - is this true? correct it
+                        if album['name'] in albums_to_listen_by_artist[artist_name]:
+                            print(album['name'], 'already in recommendation list!')
 
-                        if artist_name in rec_albums:
-                            rec_albums[artist_name].append(album['name'])
+                        if artist_name in albums_to_listen_by_artist:
+                            albums_to_listen_by_artist[artist_name].append(album['name'])
                         else:
-                            rec_albums[artist_name] = [album['name']]
+                            albums_to_listen_by_artist[artist_name] = [album['name']]
 
                 # if user has "listened" to this album before, continues!
     
 
     # updates the last updated field
-    #rec_albums['_meta_date_updated'] = str(datetime.date.today())
-    rec_albums['_meta_date_updated'] = '2020-06-15'
+    # TODO - make sure the date looks right after
+    albums_to_listen_by_artist['last_updated'] = str(datetime.date.today()
 
-    # writes the txt files
-    with open('albums_to_listen.txt', 'w+') as file:
-        file.write(json.dumps(rec_albums))
+    # updates the user info
+    usr_info['albums_to_listen_by_artist'] = albums_to_listen_by_artist
+    usr_info['tracks_saved_within_albums_by_artist'] = tracks_saved_within_albums_by_artist
 
-    with open('ids_artists_albums_tracks_saved.txt', 'w+') as file:
-        file.write(json.dumps(saved_albums))
+    # returns the updated user info
+    return usr_info
 
 def sample_inverse_freq():
 
@@ -492,6 +500,7 @@ def main():
             with open(usr_filename, 'w+') as file:
                 file.write(json.dumps(updated_usr_info))
 
+        ### START HERE
         # else if user requests an album...
         if request == 'Gimme an album!':
 
