@@ -246,24 +246,19 @@ def init_albums(sp, username, usr_info):
     # returns the updated user info
     return usr_info
 
-def update_albums(sp, username, token):
+def update_albums(sp, username, usr_info):
 
-    # loads list of recommended albums
-    info = open("albums_to_listen.txt", "r")
-    contents = info.read()
-    rec_albums = ast.literal_eval(contents)
-    info.close()
+    # loads list of recommended albums by artist
+    albums_to_listen_by_artist = usr_info['albums_to_listen_by_artist']
 
-    # loads list of saved albums
-    info = open("ids_artists_albums_tracks_saved.txt", "r")
-    contents = info.read()
-    saved_albums = ast.literal_eval(contents)
-    info.close()
+    # loads list of tracks saved by album and artist
+    tracks_saved_within_albums_by_artist = usr_info['tracks_saved_within_albums_by_artist']
 
     # extracts date of last update
-    last_update = rec_albums['_meta_date_updated']
+    last_update = usr_info['last_updated']
 
     # gets user playlists
+    # TODO - perform reset as above to minimize chances of connection failing
     res1 = sp.user_playlists(username)
     playlists = res1['items']
     while res1['next']:
@@ -275,7 +270,10 @@ def update_albums(sp, username, token):
     # for each playlist...
     for i, playlist in enumerate(playlists):
 
+        # TODO - if possible, retrieve sorted by addition date to reduce overhead
+
         # gets the tracks in the playlist
+        # TODO - perform reset as above to minimize chances of connection failing
         res2 = sp.playlist_tracks(playlist['id'])
         tracks = res2['items']
         while res2['next']:
@@ -286,26 +284,20 @@ def update_albums(sp, username, token):
         for j, track in enumerate(tracks):
 
             # extracts the time the track was added
-            date_added = track['added_at']
-            time_added = date_added.split('T')[0]
-
-            
+            date_added = track['added_at'].split('T')[0]
 
             # if addition date > update date
-            if time_added > last_update:
+            if date_added > last_update:
 
                 # adds track ID to list of tracks to be processed
                 iden = track['track']['id']
                 trx_to_process.append(iden)
 
-    # DEBUG
-    #lst = [sp.track(x)['name'] for x in trx_to_process]
-    #print(lst)
-
     # for each track to be processed:
     for iden in trx_to_process:
 
-        # resets the Spotify object -> seemed to help dropped connections
+        # resets the Spotify object
+        # TODO - determine if necessary for EVERY new track, or if can be spaced out
         sp = spotipy.Spotify(auth=token, requests_timeout=20, retries=10)
 
         track = sp.track(iden)
@@ -321,7 +313,9 @@ def update_albums(sp, username, token):
             artist_name = artist_obj['name']
 
             # if the user hasn't "listened" to any of the artist's music...
-            if artist not in saved_albums:
+            if artist not in tracks_saved_within_albums_by_artist:
+
+                # TODO - modularize - create function for adding artist discography to this list
 
                 # gets albums from that artist
                 res3 = sp.artist_albums(artist)
@@ -333,9 +327,10 @@ def update_albums(sp, username, token):
 
                 listened = False
 
-                # if the track is a single, adds it to the "listened" dict
+                ### START HERE!!
+                # if the track in question is a single, adds it to the "listened" dict
                 if len(sp.album_tracks(album['id'])) == 1:
-                    saved_albums[artist] = [album['id']]
+                    tracks_saved_within_albums_by_artist[artist] = [album['id']]
                     listened = True
 
                 # adds all of the appropriate albums to the rec list
@@ -421,15 +416,6 @@ def sample_inverse_freq():
     with open('albums_to_listen.txt', 'w+') as file:
         file.write(json.dumps(rec_albums))
 
-
-
-
-
-
-
-
-
-
 @click.command()
 def main():
     # CLI displays
@@ -441,41 +427,43 @@ def main():
     username = askUsername()
 
     if not bool(username):
+        # TODO - process this error
         return
 
 	# defines scope and uses Spotipy authenticator to sign in user
     scope = 'playlist-read-private'
     sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, username=username), requests_timeout=20, retries=10)
 
-    # if user info directory doesn't exist, creates one
-    if not os.path.exists('user_info'):
-        os.makedirs('./user_info')
-
-    usr_filename = './user_info/' + username + '_ref.txt'
-
-    # opens the user file and extracts data, initializing if necessary
-    with open(usr_filename, 'w+') as usr_file:
-
-        # if file is empty, initializes it
-        if (usr_file.read() == ""):
-            usr_info = {'current_album': '', 'last_updated': str(datetime.date.today()), 'albums_to_listen_by_artist': {}, 'tracks_saved_within_albums_by_artist': {}}
-        else:
-            usr_info = ast.literal_eval(usr_file.read())
-
     # logs the current album that the user is listening to
     log('Current album: ' + usr_info['current_album'], 'cyan')
     
     # after establishing connection, uses infinite loop to take requests
     while (True):
+
+        usr_filename = './user_info/' + username + '_ref.txt'
+
         # takes in user request
         request = askRequest()['request_type']
 
         # if request empty, returns
         if not bool(request):
+            # TODO - process this outcome
             return
 
         # if user requests to initialize...
         if request == 'Initialize':
+
+            # if user already has a usr_info file on system, returns
+            if os.path.exists('user_info') and os.path.isfile(usr_filename):
+                # TODO - process
+                return
+            
+            # creates user info directory if necessary
+            elif not os.path.exists('user_info'):
+                os.makedirs('./user_info')
+
+            # initializes user info object
+            usr_info = {'current_album': '', 'last_updated': str(datetime.date.today()), 'albums_to_listen_by_artist': {}, 'tracks_saved_within_albums_by_artist': {}}
 
             # performs initializations necessary for the app to work, returning the updated user info
             updated_usr_info = init_albums(sp, username, usr_info)
@@ -487,8 +475,22 @@ def main():
         # else if user requests to update list...
         if request == 'Update':
 
-            # updates existing list
-            update_albums(sp, username)
+            # opens the user file to create user info object
+            with open(usr_filename, 'w+') as usr_file:
+
+                # if file is empty, initializes it
+                if (usr_file.read() == ""):
+                    # SHOULDNT GET HERE
+                    # TODO - resolve
+                else:
+                    usr_info = ast.literal_eval(usr_file.read())
+
+            # performs updates to user, returning the updated user info
+            updated_usr_info = update_albums(sp, username, usr_info)
+
+            # updates user info file
+            with open(usr_filename, 'w+') as file:
+                file.write(json.dumps(updated_usr_info))
 
         # else if user requests an album...
         if request == 'Gimme an album!':
