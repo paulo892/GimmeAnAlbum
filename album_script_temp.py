@@ -16,7 +16,7 @@ from PyInquirer import (Token, ValidationError, Validator, print_json, prompt,
 from spotipy.oauth2 import SpotifyOAuth
 
 # proportion of songs in album saved to consider it unviewed
-SONGS_VIEWED_IN_ALBUM_CUTOFF = 0.5
+SONGS_VIEWED_IN_ALBUM_CUTOFF = 0.75
 
 # styles for CLI
 style = style_from_dict({
@@ -123,18 +123,16 @@ def init_albums(sp, username, usr_info):
         playlist_objects = sp.next(playlist_objects)
         playlists.extend(playlist_objects['items'])
     
-    print(playlists)
-
     # for each playlist...
     for i, playlist in enumerate(playlists):
 
         # gets the tracks in the playlist
-        res2 = sp.playlist_tracks(playlist['id'])
-        tracks = res2['items']
+        track_objects = sp.playlist_tracks(playlist['id'])
+        tracks = track_objects['items']
 
-        while res2['next']:
-            res2 = sp.next(res2)
-            tracks.extend(res2['items'])
+        while track_objects['next']:
+            track_objects = sp.next(track_objects)
+            tracks.extend(track_objects['items'])
 
         # for each track...
         for j, track in enumerate(tracks):
@@ -145,112 +143,108 @@ def init_albums(sp, username, usr_info):
             artists = [x['id'] for x in track['track']['artists']]
 
             # skips problem tracks
-            if name == 'None' or album == 'None' or None in artists:
+            if name == 'None' or album == 'None' or (None in artists) or len(artists) == 0:
                 continue
 
-            ## adds the entry to the dict
+            ## adds the track to the 'tracks_saved_within_albums_by_artist' dict
 
             # for each artist involved in track...
             for artist in artists:
 
-                # if artist not in dict, adds new entry
-                if artist not in artists_to_albums:
-                    artists_to_albums[artist] = {}
-                    artists_to_albums[artist][album] = [name]
+                # if artist has not been seen, adds new entry
+                if artist not in tracks_saved_within_albums_by_artist:
+                    tracks_saved_within_albums_by_artist[artist] = {album: [name]}
 
-                # if artist in dict...
+                # else if artist has been seen...
                 else:
-                    albums = artists_to_albums[artist]
+                    # if album has not been seen, adds new entry to 'tracks_saved_within_albums_by_artist' dict entry
+                    if album not in tracks_saved_within_albums_by_artist[artist]:
+                        tracks_saved_within_albums_by_artist[artist][album] = [name]
 
-                    # if album not in dict, adds new entry
-                    if album not in albums:
-                        albums[album] = [name]
-
-                    # if album in dict, appends track (if not in there already)
+                    # else if album has been seen...
                     else:
-                        if name not in albums[album]:
-                            albums[album].append(name)
+                        # if song has not yet been seen, adds it to the list
+                        if name not in tracks_saved_within_albums_by_artist[artist][album]:
+                            tracks_saved_within_albums_by_artist[artist][album].append(name)
 
-    # writes the dict of id's to a file
-    with open('ids_artists_albums_tracks_saved.txt', 'w+') as file:
-        file.write(json.dumps(artists_to_albums))
+    # updates the user info JSON dict with the dictionary of albums saved
+    usr_info['tracks_saved_within_albums_by_artist'] = tracks_saved_within_albums_by_artist
 
-    ## builds out txt file with albums that need checking out
+    ## initializes the dict of albums to recommend to the user
 
-    albums_by_artist_to_rec = {}
+    # for each artist in the list of saved artists...
+    for k, artist in enumerate(tracks_saved_within_albums_by_artist):
 
-    # for each artist in above list...
-    for k, artist in enumerate(artists_to_albums):
-
-        # extracts artist's name
+        # extracts artist's name, using the artist ID as a param
         artist_name = sp.artist(artist)['name']
 
         # resets the Spotify object -> seemed to help dropped connections
-        sp = spotipy.Spotify(auth=token, requests_timeout=20, retries=10)
+        if (k % 50 == 0):
+            sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope='playlist-read-private', username=username), requests_timeout=20, retries=10)
+
 
         # extracts songs they've listened to, as well as albums
-        songs_list_in_albums = artists_to_albums[artist]
+        songs_by_album = tracks_saved_within_albums_by_artist[artist]
 
-        # gets albums from that artist
-        res3 = sp.artist_albums(artist)
-        all_albums = res3['items']
+        # gets artist albums
+        album_objects = sp.artist_albums(artist)
+        all_artist_albums = album_objects['items']
 
-        while res3['next']:
-            res3 = sp.next(res3)
-            all_albums.extend(res3['items'])
+        while album_objects['next']:
+            album_objects = sp.next(album_objects)
+            all_artist_albums.extend(album_objects['items'])
 
         # TEMP - for debugging
-        if (k % 50 == 0):
+        if (k % 10 == 0):
             print('step:', k)
 
         # for each of artist's albums...
-        for album in all_albums:
+        for album in all_artist_albums:
+            ####
 
             # if user has not saved any songs on album...
-            if album['name'] not in songs_list_in_albums:
+            if album['name'] not in songs_by_album:
 
-                # adds the album to the rec list
-                if artist_name not in albums_by_artist_to_rec:
-                    albums_by_artist_to_rec[artist_name] = [album['name']]
-                else:
-                    albums_by_artist_to_rec[artist_name].append(album['name'])
+                # adds the album to recommendation dict if not already inside
+                if artist_name not in albums_to_listen_by_artist:
+                    albums_to_listen_by_artist[artist_name] = [album['name']]
+                elif album['name'] not in albums_to_listen_by_artist[artist_name]:
+                    albums_to_listen_by_artist[artist_name].append(album['name'])
 
             # if user has saved some songs on the album...
             else:
                 # counts number of tracks on album
-                res4 = sp.album_tracks(album['name'])
-                album_tracks = res4['items']
+                album_track_objects = sp.album_tracks(album['name'])
+                album_tracks = album_track_objects['items']
 
-                while res4['next']:
-                    res4 = sp.next(res4)
-                    album_tracks.extend(res4['items'])
+                while album_track_objects['next']:
+                    album_track_objects = sp.next(album_track_objects)
+                    album_tracks.extend(album_track_objects['items'])
 
                 ct_all = len(album_tracks)
 
-                # counts tracks on album saved by used
-                ct_svd = len(songs_list_in_albums[album['name']])
+                # counts tracks on album saved by user
+                ct_svd = len(songs_by_album[album['name']])
 
-                # calculates proportion
+                # calculates proportion of songs saved
                 prop = float(ct_svd) / ct_all
 
-                # if prop greater than threshold, skips the album
+                # if proportion greater than threshold, skips the album
                 if prop > SONGS_VIEWED_IN_ALBUM_CUTOFF:
                     continue
 
-                # else, adds album to the rec list
+                # else, adds album to recommendation dict if not already in it
                 else:
-                    if artist_name not in albums_by_artist_to_rec:
-                        albums_by_artist_to_rec[artist_name] = [album['name']]
-                    else:
-                        albums_by_artist_to_rec[artist_name].append(album['name'])
+                    if artist_name not in albums_to_listen_by_artist:
+                        albums_to_listen_by_artist[artist_name] = [album['name']]
+                    elif album['name'] not in albums_to_listen_by_artist[artist_name]:
+                        albums_to_listen_by_artist[artist_name].append(album['name'])
 
-    # logs the date of execution
-    albums_by_artist_to_rec['_meta_date_updated'] = str(datetime.date.today())
+    # logs the date of update
+    usr_info['albums_to_listen_by_artist'] = albums_to_listen_by_artist
 
-    # writes the txt file
-    with open('albums_to_listen.txt', 'w+') as file:
-        file.write(json.dumps(albums_by_artist_to_rec))
-
+    # returns the updated user info
+    return usr_info
 
 def update_albums(sp, username, token):
 
@@ -383,6 +377,7 @@ def update_albums(sp, username, token):
                             rec_albums[artist_name] = [album['name']]
 
                 # if user has "listened" to this album before, continues!
+    
 
     # updates the last updated field
     #rec_albums['_meta_date_updated'] = str(datetime.date.today())
@@ -450,7 +445,7 @@ def main():
 
 	# defines scope and uses Spotipy authenticator to sign in user
     scope = 'playlist-read-private'
-    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, username=username))
+    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, username=username), requests_timeout=20, retries=10)
 
     # if user info directory doesn't exist, creates one
     if not os.path.exists('user_info'):
@@ -482,8 +477,12 @@ def main():
         # if user requests to initialize...
         if request == 'Initialize':
 
-            # performs initializations necessary for the app to work
+            # performs initializations necessary for the app to work, returning the updated user info
             updated_usr_info = init_albums(sp, username, usr_info)
+
+            # updates user info file
+            with open(usr_filename, 'w+') as file:
+                file.write(json.dumps(updated_usr_info))
 
         # else if user requests to update list...
         if request == 'Update':
